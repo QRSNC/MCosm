@@ -1,0 +1,26 @@
+# --------------------  Rewrite & Security  --------------------
+Options +FollowSymLinks
+RewriteEngine On
+
+# 1) Statik dosyaları (mp4, png, js, css, vb.) doğrudan sun
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^(.+\.(mp4|png|ico|jpg|jpeg|gif|svg|css|js|webm|woff2?|ttf|eot))$ - [L]
+
+# 2) /mcosm  →  /mcosm/  (dizinler için / ekle)
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^(.+[^/])$ $1/ [L,R=301]
+
+# 3) .php uzantısını gizle
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.php -f
+RewriteRule ^(.+)$ $1.php [L]
+
+# 4) Ana sayfa
+DirectoryIndex index.php
+
+# 5) Güvenlik başlıkları (Apache mod_headers gerekli)
+Header set X-Frame-Options "DENY"
+Header set X-Content-Type-Options "nosniff"
+Header set Referrer-Policy "no-referrer"
+Header set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+Header set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
