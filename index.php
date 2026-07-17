@@ -78,6 +78,11 @@ header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
       height:30px;width:30px;border:none;background:none;cursor:pointer;z-index:3;padding:0}
     .search-btn img{height:100%;width:100%;display:block}
 
+    /* Loading overlay */
+    #loading{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);z-index:99;flex-direction:column;align-items:center;justify-content:center;color:#fff;}
+    .spinner{width:50px;height:50px;border:4px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
     @media(max-width:600px){
       h1{font-size:50px}.logo-link{height:36px}.search-btn{height:24px;width:24px}
       .search-input{padding-left:50px}.slogan{font-size:14px}
@@ -91,6 +96,13 @@ header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
     <source src="galaxy.mp4" type="video/mp4">
   </video>
 
+  <!-- Loading Screen -->
+  <div id="loading">
+      <div class="spinner"></div>
+      <h2>AI is analyzing...</h2>
+      <p style="margin-top:10px; color:rgba(255,255,255,0.7); font-size:14px;">Filtering out clickbait and brainrot.</p>
+  </div>
+
   <!-- Top navigation -->
   <div class="top">
     <a class="logo-link" href="./"><img src="favicon.ico" alt="Logo"></a>
@@ -102,7 +114,7 @@ header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
     <h1>Macrocosm</h1>
     <div class="slogan">Now it's time to reflect.</div>
 
-    <form class="search-box" action="list" method="get">
+    <form class="search-box" id="search-form" action="list" method="get">
       <button class="search-btn" type="submit"><img src="icon.png" alt=""></button>
       <input class="search-input" name="q" type="text" placeholder="Search..." autocomplete="off" required>
     </form>
@@ -112,6 +124,10 @@ header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
     /* Smooth video loop */
     document.getElementById('bg').addEventListener('ended',e=>{
       e.target.currentTime=0;e.target.play();
+    });
+
+    document.getElementById('search-form').addEventListener('submit', function() {
+        document.getElementById('loading').style.display = 'flex';
     });
   </script>
 </body>

@@ -1,5 +1,5 @@
 <?php
-/* AI filtre modülü: include edildiğinde filter_query() sağlar */
+/* AI filtre modülü: include edildiğinde filter_query() ve filter_videos() sağlar */
 
 function env_get(string $key): ?string {
     $file = __DIR__.'/.env';
@@ -25,17 +25,17 @@ function filter_query(string $query): array {
     }
 
     $apiKey = env_get('OPENROUTER_API_KEY');
-    // Model adını .env dosyasından al, yoksa varsayılanı kullan
-    $model  = env_get('OPENROUTER_MODEL') ?: 'x-ai/grok-3-mini'; 
+    $model  = env_get('OPENROUTER_MODEL') ?: 'x-ai/grok-3-mini';
     if (!$apiKey) {
-        // API anahtarı yoksa filtrelemeyi atla (fail-open)
         error_log("OpenRouter API anahtarı .env dosyasında bulunamadı.");
         return ['banned' => false, 'query' => $query];
     }
 
-    $prompt = "Sorguyu incele: \"$query\". Eğer savaş, ülkeler arası çekişme, provokatif siyasi içerik, "
-            . "barışı bozan söylem veya ülkeleri yarıştıran, ülkeler arası gelişmişlik, en iyi kıyaslamaları, bili ve tekonolojilerini sorgulayan veya bunlardan herhangi birini ima edeceğini düşündüğün veya olasılık verdiğin bir yapı içeriyorsa bile sadece BANNED yaz. "
-            . "Normal ise sadece OK yaz.";
+    $prompt = "Sorguyu incele: \"$query\". "
+            . "Eğer sorgu savaş, siyaset, ırkçılık, toksik tartışmalar, "
+            . "aşırı dopamin tetikleyici (beyin çürüten/brainrot) içerikler, anlamsız dramalar, "
+            . "veya provokatif tık tuzağı (clickbait) özellikleri barındırıyorsa, veya bunları ima ediyorsa "
+            . "sadece BANNED yaz. Normal, faydalı veya zararsız bir sorgu ise sadece OK yaz.";
 
     $payload = [
         'model' => $model,
@@ -43,7 +43,7 @@ function filter_query(string $query): array {
             ['role'=>'system','content'=>'Yalnızca BANNED veya OK.'],
             ['role'=>'user','content'=>$prompt]
         ],
-        'temperature'=>0.2,
+        'temperature'=>0.1,
         'max_tokens'=>5
     ];
 
@@ -56,14 +56,12 @@ function filter_query(string $query): array {
             "Content-Type: application/json"
         ],
         CURLOPT_POSTFIELDS => json_encode($payload),
-        CURLOPT_TIMEOUT => 10
+        CURLOPT_TIMEOUT => 15
     ]);
     $resp = curl_exec($ch);
 
-    // DÜZELTME 1: cURL hatasını kontrol et
     if (curl_errno($ch)) {
-        // Hata varsa logla ve filtreyi atla
-        error_log("cURL Hatası: " . curl_error($ch));
+        error_log("cURL Hatası (filter_query): " . curl_error($ch));
         curl_close($ch);
         return ['banned' => false, 'query' => $query];
     }
@@ -73,18 +71,108 @@ function filter_query(string $query): array {
     $reply_content = $data['choices'][0]['message']['content'] ?? '';
     $reply = strtoupper(trim($reply_content));
 
-    // DÜZELTME 2: Cevabı daha esnek kontrol et (str_contains ile)
-    // Model bazen "BANNED." gibi ek karakterler gönderebilir.
     if (str_contains($reply, 'BANNED')) {
         return ['banned' => true, 'query' => $query];
     }
-    
+
     return ['banned' => false, 'query' => $query];
+}
+
+/**
+ * YouTube API'den dönen videoları topluca Vision AI ile değerlendirir.
+ * $videos formatı: [['id'=>'...', 'title'=>'...', 'thumb'=>'...'], ...]
+ * DÖNÜŞ: Sadece güvenli ve uygun bulunan videoların ID'lerini içeren dizi.
+ */
+function filter_videos(array $videos): array {
+    if (empty($videos)) return [];
+
+    $apiKey = env_get('OPENROUTER_API_KEY');
+    // OpenRouter'da vision destekleyen güçlü ve hızlı bir model (ör. google/gemini-2.5-flash veya anthropic/claude-3-haiku)
+    // Eğer env'de yoksa varsayılan olarak vision destekli bir model seçiyoruz.
+    $model  = env_get('OPENROUTER_VISION_MODEL') ?: 'google/gemini-2.5-flash';
+
+    if (!$apiKey) {
+        error_log("OpenRouter API anahtarı yok, filter_videos atlanıyor.");
+        return array_column($videos, 'id'); // Tümünü geçir
+    }
+
+    $contentArray = [];
+    $contentArray[] = [
+        "type" => "text",
+        "text" => "Aşağıdaki YouTube videolarını, başlıkları ve küçük resimlerine göre analiz et.\n" .
+                  "Şu tarz içerikleri GÜVENLİ DEĞİL (BANNED) olarak işaretle: \n" .
+                  "- Clickbait (Tık tuzağı, abartılı oklar, kırmızı daireler, aşırı şaşıran yüzler)\n" .
+                  "- Brainrot / Aşırı dopamin tetikleyici (örneğin saçma sapan çocuk içerikleri, anlamsız spam videolar)\n" .
+                  "- Toksik, siyasi, savaş veya drama içerikleri.\n\n" .
+                  "Her videonun ID'si ve başlığı verilmiştir, bazılarına görsel de eklenmiştir. \n" .
+                  "Sadece onayladığın (güvenli, eğitici, sanatsal veya zararsız eğlence) videoların ID'lerini aralarında virgül olacak şekilde tek bir satırda döndür. BAŞKA HİÇBİR ŞEY YAZMA."
+    ];
+
+    foreach ($videos as $v) {
+        $text = "Video ID: {$v['id']}\nBaşlık: {$v['title']}\n";
+        $contentArray[] = ["type" => "text", "text" => $text];
+
+        // Thumbnail URL'sini görsel objesi olarak ekle
+        if (!empty($v['thumb'])) {
+            $contentArray[] = [
+                "type" => "image_url",
+                "image_url" => ["url" => $v['thumb']]
+            ];
+        }
+    }
+
+    $payload = [
+        'model' => $model,
+        'messages' => [
+            [
+                'role' => 'user',
+                'content' => $contentArray
+            ]
+        ],
+        'temperature' => 0.1,
+        'max_tokens' => 200
+    ];
+
+    $ch = curl_init('https://openrouter.ai/api/v1/chat/completions');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            "Authorization: Bearer $apiKey",
+            "Content-Type: application/json"
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_TIMEOUT => 25
+    ]);
+
+    $resp = curl_exec($ch);
+
+    if (curl_errno($ch)) {
+        error_log("cURL Hatası (filter_videos): " . curl_error($ch));
+        curl_close($ch);
+        return array_column($videos, 'id'); // Hata durumunda fail-open
+    }
+    curl_close($ch);
+
+    $data = json_decode($resp, true);
+    $reply_content = $data['choices'][0]['message']['content'] ?? '';
+
+    // Virgüllerle ayrılmış ID listesi gelmesini bekliyoruz
+    // Tüm kelimeleri ayır, ID uzunluğu (11 karakter) olanları topla
+    preg_match_all('/[a-zA-Z0-9_-]{11}/', $reply_content, $matches);
+
+    if (empty($matches[0])) {
+         // Model hiç ID döndürmediyse veya beklenti dışı bir cevap verdiyse
+         // Eğer cevap BANNED vb ise hepsi elenmiş olabilir.
+         return [];
+    }
+
+    return array_unique($matches[0]);
 }
 
 /* Tarayıcıdan direkt çağırılırsa JSON döndür */
 if (isset($_GET['query']) && !debug_backtrace()) {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(filter_query($_GET['query']));
-    exit;
+    die;
 }
